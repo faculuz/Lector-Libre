@@ -1,0 +1,8 @@
+build/
+dist/
+Output/
+*.spec
+__pycache__/
+models/
+*.part
+selftest-result.txt

@@ -1,0 +1,16 @@
+PySide6
+kokoro-onnx
+onnxruntime
+numpy
+sounddevice
+edge-tts
+miniaudio
+lameenc
+langdetect
+keyboard
+pyperclip
+requests
+pypdf
+python-docx
+trafilatura
+pyinstaller

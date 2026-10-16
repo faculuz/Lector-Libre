@@ -1,0 +1,78 @@
+name: Build y Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Versión
+        shell: bash
+        run: |
+          V="${GITHUB_REF_NAME#v}"; [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || V="0.0.0"
+          echo "V=$V" >> $GITHUB_ENV
+          sed -i "s/^VERSION = .*/VERSION = \"$V\"/" LectorLibre.py
+      - run: pip install -r requirements.txt
+      - name: PyInstaller (onedir)
+        shell: bash
+        run: |
+          pyinstaller --noconfirm --onedir --windowed --name LectorLibre \
+            --icon icon.ico \
+            --additional-hooks-dir hooks \
+            --collect-all kokoro_onnx \
+            --collect-all onnxruntime \
+            --collect-all espeakng_loader \
+            --collect-all phonemizer \
+            --copy-metadata kokoro-onnx \
+            --copy-metadata onnxruntime \
+            --copy-metadata espeakng-loader \
+            --copy-metadata phonemizer \
+            --collect-data certifi \
+            --collect-data langdetect \
+            --collect-all trafilatura \
+            --collect-all justext \
+            --collect-binaries miniaudio \
+            --collect-binaries lameenc \
+            --hidden-import edge_tts \
+            --add-data "icon.ico;." \
+            LectorLibre.py
+      - name: Smoke test Kokoro
+        shell: pwsh
+        run: |
+          $exe = Join-Path (Get-Location) "dist\LectorLibre\LectorLibre.exe"
+          if (-not (Test-Path $exe)) { throw "No está el ejecutable: $exe" }
+          Write-Host "Lanzando --self-test (puede descargar los modelos de Kokoro)..."
+          $p = Start-Process -FilePath $exe -ArgumentList "--self-test" -WorkingDirectory (Get-Location).Path -PassThru
+          if (-not $p.WaitForExit(900000)) {
+            try { Stop-Process -Id $p.Id -Force } catch {}
+            throw "Self-test superó los 15 minutos"
+          }
+          Write-Host "ExitCode=$($p.ExitCode)"
+          if (Test-Path "selftest-result.txt") {
+            Write-Host "---- selftest-result.txt ----"
+            Get-Content "selftest-result.txt" -Raw
+          }
+          $log = Join-Path $env:APPDATA "LectorLibre\registro.txt"
+          if (Test-Path $log) {
+            Write-Host "---- registro.txt ----"
+            Get-Content $log -Raw
+          }
+          if ($p.ExitCode -ne 0) { throw "Self-test falló con código $($p.ExitCode)" }
+      - name: Inno Setup
+        run: |
+          choco install innosetup -y --no-progress
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyVersion=$env:V" installer.iss
+      - uses: actions/upload-artifact@v4
+        with: { name: LectorLibre-Setup, path: Output/LectorLibre-Setup.exe }
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Output/LectorLibre-Setup.exe
+          generate_release_notes: true
