@@ -13,4 +13,9 @@ requests
 pypdf
 python-docx
 trafilatura
+beautifulsoup4
+piper-tts
+uiautomation
+winocr
+pillow
 pyinstaller

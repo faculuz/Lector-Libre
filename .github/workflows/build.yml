@@ -39,7 +39,11 @@ jobs:
             --collect-all justext \
             --collect-binaries miniaudio \
             --collect-binaries lameenc \
+            --collect-all piper \
             --hidden-import edge_tts \
+            --hidden-import uiautomation \
+            --hidden-import winocr \
+            --hidden-import bs4 \
             --add-data "icon.ico;." \
             LectorLibre.py
       - name: Smoke test Kokoro

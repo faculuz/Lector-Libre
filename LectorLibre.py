@@ -1,5 +1,5 @@
 # Lector Libre - lector de texto en voz alta gratuito para Windows
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 REPO = "faculuz/Lector-Libre"
 AUMID = "FacundoLuzardo.LectorLibre"
 
@@ -69,14 +69,18 @@ def _run_self_test():
 if "--self-test" in sys.argv:
     os._exit(_run_self_test())
 
-import time, re, ctypes, threading, tempfile, subprocess, winreg, requests, pyperclip, keyboard
+import time, re, ctypes, threading, tempfile, subprocess, winreg, requests, keyboard
 from PySide6.QtCore import Qt, QObject, Signal, QTimer
-from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QFileDialog, QInputDialog, QMessageBox
 from core import (
     APP, cfg, save_cfg, models_ready, download_models, add_history,
-    export_audio, Player, log
+    export_audio, export_audiobook, read_from_cursor_or_selection,
+    recognize_image_winocr, update_external_foreground, Player, log
 )
-from ui import QSS, make_icon, MiniPlayer, ReaderWindow, HistoryWindow, SettingsDialog, run_with_progress
+from ui import (
+    QSS, make_icon, MiniPlayer, ReaderWindow, HistoryWindow, SettingsDialog,
+    ScreenOcrSelector, run_with_progress
+)
 
 try:
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(AUMID)
@@ -107,14 +111,38 @@ class App(QObject):
         self.player = Player()
         self.player.error.connect(lambda msg: self.show_toast(f"Error: {msg}"))
 
-        self.mini = MiniPlayer(self.player)
-        self.reader = ReaderWindow(self.player, self.handle_export, self.open_history, self.open_settings, self.ensure_models)
+        self.ocr_selector = ScreenOcrSelector()
+        self.ocr_selector.area_captured.connect(self.on_ocr_image)
+
+        self.mini = MiniPlayer(
+            self.player,
+            on_read_sel=lambda: threading.Thread(target=self.trigger_read_sel, daemon=True).start(),
+            on_read_page=lambda: threading.Thread(target=self.trigger_read_page, daemon=True).start(),
+            on_ocr=self.trigger_ocr,
+            on_open_reader=self.open_reader,
+        )
+        self.reader = ReaderWindow(
+            self.player,
+            on_export=self.handle_export,
+            on_export_audiobook=self.handle_export_audiobook,
+            on_ocr=self.trigger_ocr,
+            on_read_page=lambda: threading.Thread(target=self.trigger_read_page, daemon=True).start(),
+            on_history=self.open_history,
+            on_settings=self.open_settings,
+            ensure_ready=self.ensure_models,
+        )
+        self.mini.settings_changed.connect(self.reader.refresh_voices)
+        self.reader.settings_changed.connect(self.mini.refresh_voices)
+
         self.hist_win = HistoryWindow(self.on_history_open)
         self.settings_dlg = None
 
         self.update_info = {"ver": None, "url": None}
         self.hk_handles = []
         self._downloading = False
+
+        self.fg_timer = QTimer(self, interval=250, timeout=update_external_foreground)
+        self.fg_timer.start()
 
         self.read_text_sig.connect(self.on_read_text)
         self.toast_sig.connect(self.show_toast)
@@ -123,13 +151,20 @@ class App(QObject):
 
         self.init_tray()
         self.register_hotkeys()
-        cfg["autostart"] = self.autostart_enabled(); save_cfg()
+        cfg["autostart"] = self.autostart_enabled()
+        save_cfg()
+        self.reader.show()
+        self.reader.raise_()
+        self.reader.activateWindow()
+        if cfg.get("mini", True):
+            self.mini.show()
+            self.mini.raise_()
 
         threading.Thread(target=self.updater_worker, daemon=True).start()
 
         if cfg.get("first_run", True):
             QTimer.singleShot(500, self.show_welcome)
-        elif cfg.get("engine") == "kokoro" and not models_ready():
+        elif cfg.get("engine") in ("kokoro", "piper") and not models_ready():
             QTimer.singleShot(1500, self.ensure_models)
 
     def init_tray(self):
@@ -138,15 +173,30 @@ class App(QObject):
         self.menu = QMenu()
 
         self.act_open = self.menu.addAction("Abrir lector", self.open_reader)
-        self.act_read_sel = self.menu.addAction(f"Leer selección ({cfg.get('hk_read', '')})", lambda: threading.Thread(target=self.trigger_read_sel, daemon=True).start())
+        self.act_mini = self.menu.addAction("Mostrar botón / reproductor flotante", self.show_mini)
+        self.act_read_sel = self.menu.addAction(
+            f"Leer selección o desde cursor ({cfg.get('hk_read', '')})",
+            lambda: threading.Thread(target=self.trigger_read_sel, daemon=True).start(),
+        )
+        self.act_read_page = self.menu.addAction(
+            f"Leer esta página / ventana ({cfg.get('hk_page', 'ctrl+alt+w')})",
+            lambda: threading.Thread(target=self.trigger_read_page, daemon=True).start(),
+        )
+        self.act_ocr = self.menu.addAction(
+            f"OCR de zona de pantalla ({cfg.get('hk_ocr', 'ctrl+alt+o')})",
+            self.trigger_ocr,
+        )
         self.act_pause = self.menu.addAction("Pausar/Reanudar", self.player.toggle_pause)
         self.act_stop = self.menu.addAction("Detener", self.player.stop)
         self.menu.addSeparator()
-        self.act_settings = self.menu.addAction("Configuración", self.open_settings)
-        self.act_hist = self.menu.addAction("Historial", self.open_history)
+        self.act_settings = self.menu.addAction("Configuración y Pronunciación", self.open_settings)
+        self.act_hist = self.menu.addAction("Historial y Marcadores", self.open_history)
         self.act_update = self.menu.addAction("Instalar actualización", self.install_update)
         self.act_update.setVisible(False)
-        self.act_check_update = self.menu.addAction("Buscar actualizaciones", lambda: threading.Thread(target=self.check_update, args=(True,), daemon=True).start())
+        self.act_check_update = self.menu.addAction(
+            "Buscar actualizaciones",
+            lambda: threading.Thread(target=self.check_update, args=(True,), daemon=True).start(),
+        )
         self.menu.addSeparator()
         self.act_exit = self.menu.addAction("Salir", self.exit_app)
 
@@ -163,16 +213,24 @@ class App(QObject):
 
     def open_reader(self):
         self.reader.show()
+        self.reader.raise_()
         self.reader.activateWindow()
+
+    def show_mini(self):
+        self.mini.show()
+        self.mini.raise_()
 
     def open_history(self):
         self.hist_win.refresh()
         self.hist_win.show()
         self.hist_win.activateWindow()
 
-    def on_history_open(self, texto, fuente):
-        self.reader.set_text(texto, fuente)
+    def on_history_open(self, texto, fuente, jump_idx=None):
+        self.reader.set_text(texto, fuente, jump_idx=jump_idx)
         self.open_reader()
+        if jump_idx is not None and self.ensure_models():
+            self.player.load(texto, fuente)
+            self.player.play(jump_idx)
 
     def open_settings(self):
         if not self.settings_dlg:
@@ -184,14 +242,25 @@ class App(QObject):
     def on_settings_saved(self):
         self.register_hotkeys()
         self.apply_autostart(cfg.get("autostart", False))
-        self.act_read_sel.setText(f"Leer selección ({cfg.get('hk_read', '')})")
+        self.act_read_sel.setText(f"Leer selección o desde cursor ({cfg.get('hk_read', '')})")
+        self.act_read_page.setText(f"Leer esta página / ventana ({cfg.get('hk_page', 'ctrl+alt+w')})")
+        self.act_ocr.setText(f"OCR de zona de pantalla ({cfg.get('hk_ocr', 'ctrl+alt+o')})")
         self.mini.refresh_voices()
+        self.reader.refresh_voices()
+        if self.mini.compact != bool(cfg.get("mini_compact", False)):
+            self.mini.compact = bool(cfg.get("mini_compact", False))
+            self.mini._apply_mode()
+        if cfg.get("mini", True):
+            self.mini.show()
+        else:
+            self.mini.hide()
         self.player.reset_voices()
 
     def autostart_enabled(self):
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run") as k:
-                winreg.QueryValueEx(k, "LectorLibre"); return True
+                winreg.QueryValueEx(k, "LectorLibre")
+                return True
         except OSError:
             return False
 
@@ -218,80 +287,78 @@ class App(QObject):
                 pass
         self.hk_handles.clear()
 
-        r_hk = cfg.get("hk_read", "ctrl+alt+r")
-        p_hk = cfg.get("hk_pause", "ctrl+alt+p")
-        try:
-            h1 = keyboard.add_hotkey(r_hk, lambda: threading.Thread(target=self.trigger_read_sel, daemon=True).start())
-            self.hk_handles.append(h1)
-        except Exception as e:
-            self.toast_sig.emit(f"Atajo inválido para leer: {r_hk}")
-
-        try:
-            h2 = keyboard.add_hotkey(p_hk, lambda: self.toggle_sig.emit("pause"))
-            self.hk_handles.append(h2)
-        except Exception as e:
-            self.toast_sig.emit(f"Atajo inválido para pausar: {p_hk}")
+        bindings = [
+            (cfg.get("hk_read", "ctrl+alt+r"), lambda: threading.Thread(target=self.trigger_read_sel, daemon=True).start(), "leer"),
+            (cfg.get("hk_pause", "ctrl+alt+p"), lambda: self.toggle_sig.emit("pause"), "pausar"),
+            (cfg.get("hk_page", "ctrl+alt+w"), lambda: threading.Thread(target=self.trigger_read_page, daemon=True).start(), "leer página"),
+            (cfg.get("hk_ocr", "ctrl+alt+o"), lambda: self.toggle_sig.emit("ocr"), "OCR"),
+        ]
+        for hk, fn, label in bindings:
+            if not hk:
+                continue
+            try:
+                self.hk_handles.append(keyboard.add_hotkey(hk, fn))
+            except Exception:
+                self.toast_sig.emit(f"Atajo inválido para {label}: {hk}")
 
     def on_toggle_cmd(self, cmd):
         if cmd == "pause":
             self.player.toggle_pause()
+        elif cmd == "ocr":
+            self.trigger_ocr()
 
     def trigger_read_sel(self):
-        try:
-            old = pyperclip.paste()
-        except Exception:
-            old = ""
-        try:
-            pyperclip.copy("")
-        except Exception:
-            pass
-        for k in ("ctrl", "alt", "shift", "windows"):
-            try:
-                keyboard.release(k)
-            except Exception:
-                pass
-        time.sleep(0.15)
-        keyboard.send("ctrl+c")
-        text = ""
-        for _ in range(10):
-            time.sleep(0.1)
-            try:
-                text = pyperclip.paste()
-                if text:
-                    break
-            except Exception:
-                pass
-        try:
-            if old:
-                pyperclip.copy(old)
-        except Exception:
-            pass
-
-        text = text.strip() if text else ""
+        """#1: Lee la selección actual o, si no hay nada seleccionado, lee desde la posición del cursor hasta que se detenga."""
+        text, src = read_from_cursor_or_selection(prefer_full_page=False)
         if text:
-            self.read_text_sig.emit(text, "Selección")
+            self.read_text_sig.emit(text, src or "Selección / Cursor")
         else:
-            self.toast_sig.emit("No hay texto seleccionado")
+            self.toast_sig.emit("No encontré texto en la selección ni bajo el cursor")
+
+    def trigger_read_page(self):
+        """#6 & #2: Modo 'Leer esta página' con un clic para el navegador o formulario activo."""
+        text, src = read_from_cursor_or_selection(prefer_full_page=True)
+        if text:
+            self.read_text_sig.emit(text, src or "Página activa")
+        else:
+            self.toast_sig.emit("No pude extraer el contenido de la página activa")
+
+    def trigger_ocr(self):
+        """#5: Abre el selector de zona en pantalla para OCR de Windows."""
+        self.ocr_selector.start_capture()
+
+    def on_ocr_image(self, pil_img):
+        def work():
+            txt = recognize_image_winocr(pil_img)
+            if txt:
+                self.read_text_sig.emit(txt, "OCR de pantalla")
+            else:
+                self.toast_sig.emit("No se detectó texto en la zona seleccionada")
+
+        threading.Thread(target=work, daemon=True).start()
 
     def ensure_models(self):
-        if self._downloading: return False
-        if cfg.get("engine") == "kokoro" and not models_ready():
+        if self._downloading:
+            return False
+        if cfg.get("engine") in ("kokoro", "piper") and not models_ready():
             self._downloading = True
             try:
-                ok, err = run_with_progress(None, "Descargando la voz (una sola vez)...", download_models)
+                ok, err = run_with_progress(None, "Descargando la voz seleccionada (una sola vez)...", download_models)
             finally:
                 self._downloading = False
             if not ok:
                 r = QMessageBox.question(
-                    None, APP,
-                    f"No se pudo descargar la voz ({str(err)[:120]}).\n\n¿Querés usar la voz online gratuita (Edge) mientras tanto? Se reintentará la próxima vez.",
-                    QMessageBox.Yes | QMessageBox.No
+                    None,
+                    APP,
+                    f"No se pudo descargar la voz ({str(err)[:120]}).\n\n¿Querés usar la voz online gratuita (Edge) mientras tanto?",
+                    QMessageBox.Yes | QMessageBox.No,
                 )
                 if r == QMessageBox.Yes:
                     cfg["engine"] = "edge"
                     save_cfg()
                     if self.settings_dlg:
                         self.settings_dlg.refresh_engine_ui()
+                    self.mini.refresh_voices()
                     return True
                 return False
         return True
@@ -300,9 +367,10 @@ class App(QObject):
         if not self.ensure_models():
             return
         add_history(text, fuente)
-        self.player.load(text)
+        self.player.load(text, fuente)
         if not self.player.chunks:
-            self.show_toast("No encontré texto para leer"); return
+            self.show_toast("No encontré texto para leer")
+            return
         self.player.play(0)
         if cfg.get("mini", True):
             self.mini.show()
@@ -323,15 +391,44 @@ class App(QObject):
         else:
             QMessageBox.critical(self.reader, APP, f"Error al exportar audio:\n{res}")
 
+    def handle_export_audiobook(self, text, epub_chapters=None):
+        """#11: Exporta el documento entero como audiolibro separado por capítulos."""
+        if not text.strip():
+            QMessageBox.information(self.reader, APP, "No hay texto en el lector para exportar como audiolibro.")
+            return
+        if not self.ensure_models():
+            return
+        out_dir = QFileDialog.getExistingDirectory(self.reader, "Elegí la carpeta donde guardar los capítulos del audiolibro")
+        if not out_dir:
+            return
+        fmt, ok_fmt = QInputDialog.getItem(self.reader, APP, "Formato de audio por capítulo:", ["MP3", "WAV"], 0, False)
+        if not ok_fmt:
+            return
+        ok, res = run_with_progress(
+            self.reader,
+            "Exportando audiolibro por capítulos...",
+            lambda pcb: export_audiobook(text, out_dir, fmt, pcb, chapters_override=epub_chapters),
+        )
+        if ok:
+            QMessageBox.information(
+                self.reader,
+                APP,
+                f"Audiolibro exportado ({len(res)} capítulos + lista Audiolibro.m3u) en:\n{out_dir}",
+            )
+        else:
+            QMessageBox.critical(self.reader, APP, f"Error al exportar audiolibro:\n{res}")
+
     def show_welcome(self):
         cfg["first_run"] = False
         save_cfg()
         QMessageBox.information(
-            None, APP,
+            None,
+            APP,
             "¡Bienvenido a Lector Libre!\n\n"
-            f"• Seleccioná cualquier texto y apretá {cfg.get('hk_read', 'ctrl+alt+r').upper()} para escucharlo.\n"
-            "• Ahora se descarga la voz (unos 340 MB, una sola vez). Después funciona sin internet.\n"
-            "• Todas las opciones están en el ícono junto al reloj (clic derecho)."
+            f"• Seleccioná texto o dejá el cursor donde quieras y apretá {cfg.get('hk_read', 'ctrl+alt+r').upper()}.\n"
+            f"• Para leer una página web o formulario activo: {cfg.get('hk_page', 'ctrl+alt+w').upper()} o el botón 📄 del reproductor.\n"
+            f"• Para leer texto de una imagen (OCR): {cfg.get('hk_ocr', 'ctrl+alt+o').upper()} o el botón 🔍.\n"
+            "• Todas las opciones están en el ícono junto al reloj (clic derecho).",
         )
         self.ensure_models()
 
