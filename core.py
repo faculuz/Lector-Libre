@@ -1395,8 +1395,9 @@ def _extract_active_window_smart(from_focus_only=False):
                             add_line(f"Seleccionado: {name}")
                     except Exception:
                         pass
-                elif ctype in ("TextControl", "DataItemControl", "ListItemControl"):
+                elif ctype in ("TextControl", "DataItemControl", "ListItemControl", "GroupControl", "PaneControl"):
                     if name and len(name) >= 3:
+                        # Para correos como Gmail que exponen el cuerpo en el Name de un GroupControl / PaneControl / DocumentControl
                         add_line(name)
 
             out = "\n".join(lines).strip()

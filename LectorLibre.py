@@ -133,6 +133,7 @@ class App(QObject):
         )
         self.mini.settings_changed.connect(self.reader.refresh_voices)
         self.reader.settings_changed.connect(self.mini.refresh_voices)
+        self.reader.visibility_changed.connect(self._on_reader_visibility)
 
         self.hist_win = HistoryWindow(self.on_history_open)
         self.settings_dlg = None
@@ -219,6 +220,13 @@ class App(QObject):
     def show_mini(self):
         self.mini.show()
         self.mini.raise_()
+
+    def _on_reader_visibility(self, visible):
+        if visible:
+            self.mini.hide()
+        elif cfg.get("mini", True):
+            self.mini.show()
+            self.mini.raise_()
 
     def open_history(self):
         self.hist_win.refresh()

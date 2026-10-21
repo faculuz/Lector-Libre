@@ -796,6 +796,7 @@ class JumpableTextEdit(QTextEdit):
 # ---------- Ventana principal estilo Estudio Moderno ----------
 class ReaderWindow(QMainWindow):
     settings_changed = Signal()
+    visibility_changed = Signal(bool)
 
     def __init__(self, player, on_export, on_export_audiobook, on_ocr, on_read_page, on_history, on_settings, ensure_ready):
         super().__init__()
@@ -1040,7 +1041,15 @@ class ReaderWindow(QMainWindow):
         player.sentence_started.connect(self._on_sentence)
         player.word_started.connect(self._on_word)
         player.state_changed.connect(self._on_state)
-        hide_on_close(self)
+
+    def closeEvent(self, e):
+        e.ignore()
+        self.hide()
+        self.visibility_changed.emit(False)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.visibility_changed.emit(True)
 
     def refresh_voices(self):
         es, en, kes, ken = voices_for_engine()
