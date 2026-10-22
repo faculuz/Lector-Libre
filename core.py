@@ -8,10 +8,13 @@ APP = "Lector Libre"
 DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "LectorLibre")
 MODEL_DIR = os.path.join(DIR, "models")
 PIPER_DIR = os.path.join(MODEL_DIR, "piper")
+CUSTOM_VOICE_DIR = os.path.join(MODEL_DIR, "custom_voices")
 os.makedirs(PIPER_DIR, exist_ok=True)
+os.makedirs(CUSTOM_VOICE_DIR, exist_ok=True)
 CFG = os.path.join(DIR, "config.json")
 HIST = os.path.join(DIR, "historial.json")
 BOOKMARKS = os.path.join(DIR, "marcadores.json")
+CUSTOM_VOICES_META = os.path.join(DIR, "voces_personalizadas.json")
 LOG = os.path.join(DIR, "registro.txt")
 SR = 24000
 
@@ -52,6 +55,7 @@ DEFAULT = {
     "word_highlight": True,
     "autostart": False,
     "first_run": True,
+    "show_welcome_tutorial": True,
     "pronunciation": dict(DEFAULT_PRONUNCIATION),
 }
 cfg = dict(DEFAULT)
@@ -78,10 +82,61 @@ def save_cfg():
     except Exception as e:
         log("save_cfg", e)
 
-KOKORO_ES = ["ef_dora", "em_alex", "em_santa"]
-KOKORO_EN = ["af_heart", "af_bella", "af_nicole", "am_michael", "am_fenrir", "bf_emma", "bm_george"]
-EDGE_ES = ["es-AR-ElenaNeural", "es-AR-TomasNeural", "es-MX-DaliaNeural", "es-ES-AlvaroNeural"]
-EDGE_EN = ["en-US-AriaNeural", "en-US-GuyNeural", "en-GB-SoniaNeural"]
+KOKORO_LABELS = {
+    "ef_dora": "ES · Dora (Cálida)",
+    "em_alex": "ES · Alex (Natural)",
+    "em_santa": "ES · Santa (Grave)",
+    "pm_alex": "ES · Alex Studio (Cálido HD)",
+    "pf_dora": "ES · Dora Studio (Suave HD)",
+    "if_sara": "ES · Sara (Clara HD)",
+    "im_nicola": "ES · Nicola (Barítono HD)",
+    "af_heart": "US/ES · Heart (Narradora Studio)",
+    "af_bella": "US/ES · Bella (Expresiva)",
+    "af_nicole": "US · Nicole (Suave)",
+    "af_nova": "US · Nova (Clara)",
+    "af_sarah": "US · Sarah (Cálida)",
+    "am_michael": "US/ES · Michael (Barítono)",
+    "am_fenrir": "US/ES · Fenrir (Profundo)",
+    "am_onyx": "US/ES · Onyx (Locutor Radio)",
+    "am_adam": "US · Adam (Firme)",
+    "am_echo": "US · Echo (Sereno)",
+    "bf_emma": "UK · Emma (Británica)",
+    "bf_isabella": "UK/ES · Isabella (Cálida)",
+    "bm_george": "UK · George (Clásico)",
+    "bm_fable": "UK · Fable (Narrador)",
+}
+
+KOKORO_ES_BASE = ["ef_dora", "em_alex", "pm_alex", "pf_dora", "if_sara", "im_nicola", "am_fenrir", "am_onyx", "af_heart", "em_santa"]
+KOKORO_EN_BASE = ["af_heart", "af_bella", "af_nova", "af_nicole", "am_michael", "am_fenrir", "am_onyx", "bf_emma", "bf_isabella", "bm_george", "bm_fable"]
+
+EDGE_LABELS = {
+    "es-AR-ElenaNeural": "AR · Elena (online)",
+    "es-AR-TomasNeural": "AR · Tomás (online)",
+    "es-UY-ValentinaNeural": "UY · Valentina (online)",
+    "es-CL-CatalinaNeural": "CL · Catalina (online)",
+    "es-CO-SalomeNeural": "CO · Salomé (online)",
+    "es-CO-GonzaloNeural": "CO · Gonzalo (online)",
+    "es-MX-DaliaNeural": "MX · Dalia (online)",
+    "es-MX-JorgeNeural": "MX · Jorge (online)",
+    "es-ES-AlvaroNeural": "ES · Álvaro (online)",
+    "en-US-AvaMultilingualNeural": "Multi · Ava HD Bilingüe (online)",
+    "en-US-AndrewMultilingualNeural": "Multi · Andrew HD Bilingüe (online)",
+    "en-US-BrianMultilingualNeural": "Multi · Brian HD Bilingüe (online)",
+    "en-US-AriaNeural": "US · Aria (online)",
+    "en-US-GuyNeural": "US · Guy (online)",
+    "en-GB-SoniaNeural": "UK · Sonia (online)",
+}
+
+EDGE_ES = [
+    "es-AR-ElenaNeural", "es-AR-TomasNeural", "es-UY-ValentinaNeural",
+    "es-CL-CatalinaNeural", "es-CO-SalomeNeural", "es-CO-GonzaloNeural",
+    "es-MX-DaliaNeural", "es-MX-JorgeNeural", "es-ES-AlvaroNeural",
+    "en-US-AvaMultilingualNeural", "en-US-AndrewMultilingualNeural", "en-US-BrianMultilingualNeural",
+]
+EDGE_EN = [
+    "en-US-AvaMultilingualNeural", "en-US-AndrewMultilingualNeural", "en-US-BrianMultilingualNeural",
+    "en-US-AriaNeural", "en-US-GuyNeural", "en-GB-SoniaNeural",
+]
 
 PIPER_CATALOG = {
     "es_AR-daniela-high": ("AR · Daniela (Piper)", "es/es_AR/daniela/high/es_AR-daniela-high"),
@@ -94,14 +149,54 @@ PIPER_CATALOG = {
 PIPER_ES = ["es_AR-daniela-high", "es_MX-claude-high", "es_MX-ald-medium", "es_ES-davefx-medium"]
 PIPER_EN = ["en_US-lessac-medium", "en_US-amy-medium"]
 
+def load_custom_voices():
+    try:
+        if os.path.isfile(CUSTOM_VOICES_META):
+            data = json.load(open(CUSTOM_VOICES_META, encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except Exception as e:
+        log("load_custom_voices", e)
+    return {}
+
+def _save_custom_voices_meta(meta):
+    try:
+        with open(CUSTOM_VOICES_META, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        log("save_custom_voices_meta", e)
+
+def get_kokoro_lists():
+    custom = load_custom_voices()
+    c_es = [vid for vid, m in custom.items() if m.get("engine", "kokoro") == "kokoro" and m.get("lang", "es") == "es" and os.path.isfile(m.get("path", ""))]
+    c_en = [vid for vid, m in custom.items() if m.get("engine", "kokoro") == "kokoro" and m.get("lang", "es") == "en" and os.path.isfile(m.get("path", ""))]
+    # Las voces personalizadas aparecen primero para acceso rápido
+    return c_es + KOKORO_ES_BASE, c_en + KOKORO_EN_BASE
+
+def get_piper_lists():
+    custom = load_custom_voices()
+    c_es = [vid for vid, m in custom.items() if m.get("engine") == "piper" and m.get("lang", "es") == "es" and os.path.isfile(m.get("path", ""))]
+    c_en = [vid for vid, m in custom.items() if m.get("engine") == "piper" and m.get("lang", "es") == "en" and os.path.isfile(m.get("path", ""))]
+    return c_es + PIPER_ES, c_en + PIPER_EN
+
+KOKORO_ES = KOKORO_ES_BASE
+KOKORO_EN = KOKORO_EN_BASE
+
 def voice_label(v):
+    custom = load_custom_voices()
+    if v in custom:
+        return custom[v].get("label", f"★ {v}")
+    if v in KOKORO_LABELS:
+        return KOKORO_LABELS[v]
     if v in PIPER_CATALOG:
         return PIPER_CATALOG[v][0]
+    if v in EDGE_LABELS:
+        return EDGE_LABELS[v]
     if "-" in v:  # edge
         tag = "UK" if v.startswith("en-GB") else ("US" if v.startswith("en") else ("AR" if "es-AR" in v else ("MX" if "es-MX" in v else "ES")))
         return f"{tag} · {v.split('-')[-1].replace('Neural', '')} (online)"
     tag = "ES" if v[0] in "e" else ("UK" if v[0] == "b" else "US")
-    return f"{tag} · {v.split('_', 1)[1].capitalize()}"
+    return f"{tag} · {v.split('_', 1)[-1].capitalize()}"
 
 _URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
 MODEL_FILES = [
@@ -112,6 +207,10 @@ MODEL_FILES = [
 _PIPER_HF = "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
 
 def piper_paths(voice_id):
+    custom = load_custom_voices()
+    if voice_id in custom and custom[voice_id].get("engine") == "piper":
+        p = custom[voice_id].get("path", "")
+        return (p, p + ".json")
     return (
         os.path.join(PIPER_DIR, f"{voice_id}.onnx"),
         os.path.join(PIPER_DIR, f"{voice_id}.onnx.json"),
@@ -130,6 +229,9 @@ def models_ready():
 
 def download_piper_voice(voice_id, progress=None, step_prefix=""):
     import requests
+    custom = load_custom_voices()
+    if voice_id in custom:
+        return
     if voice_id not in PIPER_CATALOG:
         raise RuntimeError(f"Voz Piper desconocida: {voice_id}")
     rel = PIPER_CATALOG[voice_id][1]
@@ -441,12 +543,329 @@ def time_stretch_pitch_preserving(audio, rate, sr=SR):
 
     return np.clip(y[:out_pos + half], -1.0, 1.0)
 
-# ---------- motores (#7 Piper + #4 Time-stretch + #12 Diccionario) ----------
+# ---------- Estudio de Voz: Clonación / Perfilado por única vez (0% CPU extra al leer) ----------
+STUDIO_BASE_VOICES = [
+    ("em_alex", "ES · Alex (Barítono Natural)"),
+    ("pm_alex", "ES · Alex Studio (Cálido HD)"),
+    ("ef_dora", "ES · Dora (Femenina Cálida)"),
+    ("pf_dora", "ES · Dora Studio (Suave HD)"),
+    ("if_sara", "ES · Sara (Femenina Clara)"),
+    ("im_nicola", "ES · Nicola (Barítono Suave)"),
+    ("em_santa", "ES · Santa (Grave Profundo)"),
+    ("am_fenrir", "Studio · Fenrir (Profundo y Firme)"),
+    ("am_onyx", "Studio · Onyx (Locutor Radio)"),
+    ("am_michael", "Studio · Michael (Barítono Cálido)"),
+    ("am_adam", "Studio · Adam (Tenor Claro)"),
+    ("am_echo", "Studio · Echo (Sereno y Calmo)"),
+    ("bm_fable", "Studio · Fable (Narrador Expresivo)"),
+    ("bm_george", "Studio · George (Clásico)"),
+    ("af_heart", "Studio · Heart (Narradora Cálida HD)"),
+    ("af_bella", "Studio · Bella (Expresiva y Dinámica)"),
+    ("af_nova", "Studio · Nova (Brillante y Clara)"),
+    ("af_sarah", "Studio · Sarah (Suave y Natural)"),
+    ("bf_isabella", "Studio · Isabella (Cálida y Serena)"),
+]
+
+VOICE_SCRIPTS = [
+    (
+        "Guion 1 · Narración cálida y natural (Recomendado · 15 seg)",
+        "Leer en voz alta transforma cualquier texto en una conversación tranquila. "
+        "Cuando la voz suena cálida, clara y con pausas naturales, escuchar un libro o un artículo largo se vuelve un placer. "
+        "¿Qué historia vamos a descubrir hoy?",
+    ),
+    (
+        "Guion 2 · Lectura informativa y clara (Artículos y estudio · 15 seg)",
+        "El aprendizaje profundo funciona mejor cuando combinamos la lectura visual con una escucha atenta. "
+        "Cada capítulo suma nuevas ideas, preguntas importantes y detalles que vale la pena recordar con claridad.",
+    ),
+    (
+        "Guion 3 · Bilingüe Español / Inglés (15 seg)",
+        "Esta es mi voz natural grabada por única vez para Lector Libre. "
+        "Now I can also read any document, book, or web page in clear and natural English without extra processor load.",
+    ),
+]
+
+def load_audio_any(path_or_array, sr_in=SR):
+    """Carga un arreglo numpy o un archivo .wav/.mp3/.flac y lo devuelve como float32 mono a SR Hz."""
+    if isinstance(path_or_array, np.ndarray):
+        a = np.asarray(path_or_array, dtype=np.float32).reshape(-1)
+        return resample(a, sr_in, SR) if sr_in != SR else a
+    path = str(path_or_array)
+    if path.lower().endswith(".wav"):
+        try:
+            with wave.open(path, "rb") as w:
+                ch = w.getnchannels()
+                sw = w.getsampwidth()
+                rate = w.getframerate()
+                raw = w.readframes(w.getnframes())
+            if sw == 2:
+                a = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            elif sw == 4:
+                a = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+            else:
+                a = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+            if ch > 1:
+                a = a.reshape(-1, ch).mean(axis=1)
+            return resample(a, rate, SR) if rate != SR else a
+        except Exception:
+            pass
+    import miniaudio
+    d = miniaudio.decode_file(path, output_format=miniaudio.SampleFormat.FLOAT32, nchannels=1, sample_rate=SR)
+    return np.asarray(d.samples, dtype=np.float32).reshape(-1)
+
+def analyze_voice_sample(audio_or_path, sr=SR):
+    """
+    Analiza por única vez una grabación de voz del usuario (tono fundamental F0,
+    centroide espectral/calidez, riqueza armónica y cadencia) y devuelve los parámetros
+    óptimos para sintetizar su huella de voz fija (.npy de 512 KB).
+    """
+    a = load_audio_any(audio_or_path, sr)
+    if len(a) < int(SR * 1.2):
+        raise RuntimeError("La grabación es demasiado corta (mínimo 2 segundos de voz hablada).")
+    peak = float(np.max(np.abs(a)))
+    if peak < 0.015:
+        raise RuntimeError("El volumen de la grabación es muy bajo. Acercate un poco más al micrófono e intentá de nuevo.")
+    a = a / peak
+
+    frame_len = int(0.040 * SR)  # 40 ms
+    hop = int(0.015 * SR)        # 15 ms
+    f0_list = []
+    centroids = []
+    low_ratios = []
+    rms_list = []
+
+    min_lag = int(SR / 340.0)
+    max_lag = int(SR / 72.0)
+    win = np.hanning(frame_len).astype(np.float32)
+    freqs = np.fft.rfftfreq(frame_len, d=1.0 / SR)
+
+    for start in range(0, len(a) - frame_len, hop):
+        seg = a[start:start + frame_len]
+        rms = float(np.sqrt(np.mean(seg * seg)))
+        rms_list.append(rms)
+        if rms < 0.08:
+            continue
+        wseg = seg * win
+        spec = np.abs(np.fft.rfft(wseg)) + 1e-9
+        c_hz = float(np.sum(freqs * spec) / np.sum(spec))
+        centroids.append(c_hz)
+
+        e_low = float(np.sum(spec[(freqs >= 80) & (freqs <= 450)] ** 2))
+        e_high = float(np.sum(spec[(freqs > 450) & (freqs <= 4200)] ** 2)) + 1e-9
+        low_ratios.append(e_low / (e_low + e_high))
+
+        # Autocorrelación por FFT para estimar F0 en segmentos sonoros
+        ac = np.fft.irfft(np.abs(np.fft.rfft(wseg, n=frame_len * 2)) ** 2)[:frame_len]
+        if ac[0] > 1e-6:
+            ac = ac / ac[0]
+            sub = ac[min_lag:max_lag]
+            if len(sub) > 0:
+                best_i = int(np.argmax(sub))
+                if sub[best_i] > 0.32:
+                    f0_list.append(float(SR / (min_lag + best_i)))
+
+    voiced_sec = len(centroids) * (hop / float(SR))
+    if voiced_sec < 0.8 or not f0_list:
+        f0_med = 135.0
+        f0_std_st = 2.2
+    else:
+        f0_arr = np.asarray(f0_list, dtype=np.float32)
+        f0_med = float(np.median(f0_arr))
+        st_arr = 12.0 * np.log2(np.maximum(f0_arr, 50.0) / max(50.0, f0_med))
+        f0_std_st = float(np.std(st_arr))
+
+    cent_med = float(np.median(centroids)) if centroids else 1450.0
+    low_med = float(np.median(low_ratios)) if low_ratios else 0.55
+
+    # Clasificar registro vocal y elegir las 2 voces base más cercanas en el espacio de Kokoro
+    if f0_med < 112:
+        reg = "Barítono profundo"
+        base1, base2, mix = "am_fenrir", "pm_alex", 45
+    elif f0_med < 138:
+        reg = "Barítono cálido"
+        base1, base2, mix = ("pm_alex", "am_michael", 40) if low_med > 0.52 else ("em_alex", "am_onyx", 38)
+    elif f0_med < 168:
+        reg = "Tenor / Registro medio"
+        base1, base2, mix = "em_alex", "im_nicola", 42
+    elif f0_med < 205:
+        reg = "Contralto / Femenina cálida"
+        base1, base2, mix = ("pf_dora", "af_heart", 45) if low_med > 0.50 else ("ef_dora", "bf_isabella", 40)
+    else:
+        reg = "Soprano / Femenina clara"
+        base1, base2, mix = "if_sara", "af_bella", 42
+
+    # Mapear rasgos acústicos medidos a los 3 ejes (-100 a +100)
+    # 1) Profundidad: según F0 relativo al centro del registro y energía grave
+    target_center = 128.0 if f0_med < 168 else 210.0
+    depth_pct = int(np.clip(((target_center - f0_med) * 1.4) + ((low_med - 0.52) * 120.0), -85, 85))
+    # 2) Calidez vs Brillo: según centroide espectral
+    warmth_pct = int(np.clip((1550.0 - cent_med) / 14.0, -85, 85))
+    # 3) Expresividad: según variación entonacional en semitonos
+    expr_pct = int(np.clip((f0_std_st - 2.1) * 28.0, -75, 85))
+
+    summary = (
+        f"Voz analizada ({voiced_sec:.1f} s de habla activa) · "
+        f"Tono fundamental: {f0_med:.0f} Hz ({reg}) · "
+        f"Calidez grave: {int(low_med * 100)}% · "
+        f"Base sugerida: {KOKORO_LABELS.get(base1, base1)} + {KOKORO_LABELS.get(base2, base2)}"
+    )
+    return {
+        "duration_sec": round(voiced_sec, 1),
+        "f0_hz": round(f0_med, 1),
+        "register": reg,
+        "base1": base1,
+        "base2": base2,
+        "mix_pct": mix,
+        "depth_pct": depth_pct,
+        "warmth_pct": warmth_pct,
+        "expr_pct": expr_pct,
+        "summary": summary,
+    }
+
+def build_custom_kokoro_vector(base1, base2, mix_pct=35, depth_pct=0, warmth_pct=0, expr_pct=0, lang="es"):
+    """
+    Construye y hornea por única vez el tensor de estilo Kokoro (510, 1, 256) float32:
+    - Dimensiones 0:128: identidad acústica (timbre, tracto vocal, profundidad y calidez).
+    - Dimensiones 128:256: estilo prosódico (cadencia, entonación y naturalidad en el idioma elegido).
+    Una vez guardado en .npy (512 KB), Kokoro lo ejecuta exactamente a la misma velocidad que las voces nativas.
+    """
+    voices_bin = MODEL_FILES[1][1]
+    if not os.path.isfile(voices_bin):
+        raise RuntimeError("Primero descargá las voces locales de Kokoro para usar el Estudio de Voz.")
+    bank = np.load(voices_bin)
+    v1 = np.asarray(bank[base1 if base1 in bank.files else "em_alex"], dtype=np.float32)
+    v2 = np.asarray(bank[base2 if base2 in bank.files else "pm_alex"], dtype=np.float32)
+
+    alpha = float(np.clip(mix_pct / 100.0, 0.0, 1.0))
+    blended = (1.0 - alpha) * v1 + alpha * v2
+    out = blended.copy()
+
+    # Eje 1: Profundidad / Tracto vocal en subespacio acústico (0:128)
+    deep_ref = 0.5 * (np.asarray(bank["am_fenrir"], dtype=np.float32) + np.asarray(bank["am_onyx"], dtype=np.float32))
+    bright_ref = 0.5 * (np.asarray(bank["af_bella"], dtype=np.float32) + np.asarray(bank["if_sara"], dtype=np.float32))
+    axis_depth = (deep_ref[:, :, :128] - bright_ref[:, :, :128]) * 0.22
+
+    # Eje 2: Calidez de pecho vs Claridad brillante en subespacio acústico (0:128)
+    warm_ref = 0.5 * (np.asarray(bank["af_heart"], dtype=np.float32) + np.asarray(bank["pm_alex"], dtype=np.float32))
+    crisp_ref = 0.5 * (np.asarray(bank["af_nova"], dtype=np.float32) + np.asarray(bank["am_adam"], dtype=np.float32))
+    axis_warmth = (warm_ref[:, :, :128] - crisp_ref[:, :, :128]) * 0.25
+
+    d_val = float(np.clip(depth_pct / 100.0, -1.0, 1.0))
+    w_val = float(np.clip(warmth_pct / 100.0, -1.0, 1.0))
+    out[:, :, :128] += d_val * axis_depth + w_val * axis_warmth
+
+    # Eje 3: Expresividad y cadencia en subespacio prosódico (128:256)
+    e_val = float(np.clip(expr_pct / 100.0, -1.0, 1.0))
+    dyn_ref = 0.5 * (np.asarray(bank["af_bella"], dtype=np.float32) + np.asarray(bank["bm_fable"], dtype=np.float32))
+    calm_ref = 0.5 * (np.asarray(bank["am_echo"], dtype=np.float32) + np.asarray(bank["ef_dora"], dtype=np.float32))
+    axis_expr = (dyn_ref[:, :, 128:] - calm_ref[:, :, 128:]) * 0.24
+    out[:, :, 128:] += e_val * axis_expr
+
+    # Anclar dicción natural en español si el idioma elegido es español y se mezclaron voces internacionales
+    if lang == "es":
+        es_anchor = np.asarray(bank["em_alex" if v1[0, 0, 0] == bank["em_alex"][0, 0, 0] or "m_" in base1 else "ef_dora"], dtype=np.float32)
+        out[:, :, 128:] = 0.78 * out[:, :, 128:] + 0.22 * es_anchor[:, :, 128:]
+
+    # Preservar la energía estadística original del vector de estilo para evitar saturación
+    orig_norm_ac = np.linalg.norm(blended[:, :, :128], axis=-1, keepdims=True) + 1e-7
+    new_norm_ac = np.linalg.norm(out[:, :, :128], axis=-1, keepdims=True) + 1e-7
+    out[:, :, :128] *= (orig_norm_ac / new_norm_ac)
+
+    orig_norm_pr = np.linalg.norm(blended[:, :, 128:], axis=-1, keepdims=True) + 1e-7
+    new_norm_pr = np.linalg.norm(out[:, :, 128:], axis=-1, keepdims=True) + 1e-7
+    out[:, :, 128:] *= (orig_norm_pr / new_norm_pr)
+
+    return out.astype(np.float32)
+
+def save_custom_kokoro_voice(name, vec, lang="es", details=None):
+    """Guarda el vector (510, 1, 256) en disco (.npy de 512 KB) y lo registra en el catálogo local."""
+    clean_name = re.sub(r"[^\w\sÁÉÍÓÚÑáéíóúñ-]", "", (name or "").strip())[:36].strip() or "Mi Voz"
+    slug = re.sub(r"[^a-z0-9]+", "_", clean_name.lower()).strip("_") or "voz"
+    vid = f"custom_{slug}_{int(time.time()) % 10000}"
+    npy_path = os.path.join(CUSTOM_VOICE_DIR, f"{vid}.npy")
+    np.save(npy_path, np.asarray(vec, dtype=np.float32))
+
+    meta = load_custom_voices()
+    tag = "ES" if lang == "es" else "EN"
+    meta[vid] = {
+        "id": vid,
+        "name": clean_name,
+        "label": f"★ {tag} · {clean_name} (Mi Voz)",
+        "engine": "kokoro",
+        "lang": lang,
+        "path": npy_path,
+        "created": time.strftime("%d/%m/%Y %H:%M"),
+        "details": details or {},
+    }
+    _save_custom_voices_meta(meta)
+    engine.clear_custom_cache()
+    return vid
+
+def import_custom_piper_voice(onnx_src_path, name="", lang="es"):
+    """Importa un archivo .onnx (+ .onnx.json) entrenado para Piper y lo deja disponible sin costo extra."""
+    import shutil
+    if not os.path.isfile(onnx_src_path):
+        raise RuntimeError("No se encontró el archivo .onnx seleccionado.")
+    json_src = onnx_src_path + ".json"
+    if not os.path.isfile(json_src):
+        alt_json = os.path.splitext(onnx_src_path)[0] + ".json"
+        if os.path.isfile(alt_json):
+            json_src = alt_json
+        else:
+            raise RuntimeError("Falta el archivo de configuración .onnx.json junto al modelo .onnx.")
+
+    base_n = name.strip() or os.path.splitext(os.path.basename(onnx_src_path))[0]
+    slug = re.sub(r"[^a-z0-9]+", "_", base_n.lower()).strip("_") or "piper_custom"
+    vid = f"custom_piper_{slug}"
+    dst_onnx = os.path.join(CUSTOM_VOICE_DIR, f"{vid}.onnx")
+    dst_json = dst_onnx + ".json"
+    shutil.copy2(onnx_src_path, dst_onnx)
+    shutil.copy2(json_src, dst_json)
+
+    meta = load_custom_voices()
+    tag = "ES" if lang == "es" else "EN"
+    meta[vid] = {
+        "id": vid,
+        "name": base_n,
+        "label": f"★ {tag} · {base_n} (Piper ONNX)",
+        "engine": "piper",
+        "lang": lang,
+        "path": dst_onnx,
+        "created": time.strftime("%d/%m/%Y %H:%M"),
+    }
+    _save_custom_voices_meta(meta)
+    return vid
+
+def delete_custom_voice(vid):
+    meta = load_custom_voices()
+    info = meta.pop(vid, None)
+    if info:
+        p = info.get("path", "")
+        for f in (p, p + ".json"):
+            try:
+                if f and os.path.isfile(f):
+                    os.remove(f)
+            except Exception:
+                pass
+        _save_custom_voices_meta(meta)
+        engine.clear_custom_cache()
+    if cfg.get("voice_es") == vid:
+        cfg["voice_es"] = DEFAULT["voice_es"]
+    if cfg.get("voice_en") == vid:
+        cfg["voice_en"] = DEFAULT["voice_en"]
+    save_cfg()
+
+# ---------- motores (#7 Piper + #4 Time-stretch + #12 Diccionario + Voces Personalizadas) ----------
 class Engine:
     def __init__(self):
         self._k = None
         self._piper = {}
+        self._custom_vecs = {}
         self._lock = threading.Lock()
+
+    def clear_custom_cache(self):
+        with self._lock:
+            self._custom_vecs.clear()
 
     def kokoro(self):
         with self._lock:
@@ -455,6 +874,19 @@ class Engine:
                 from kokoro_onnx import Kokoro
                 self._k = Kokoro(MODEL_FILES[0][1], MODEL_FILES[1][1])
             return self._k
+
+    def _resolve_kokoro_voice(self, v):
+        if isinstance(v, np.ndarray):
+            return v
+        if str(v).startswith("custom_"):
+            if v not in self._custom_vecs:
+                meta = load_custom_voices().get(v)
+                if meta and os.path.isfile(meta.get("path", "")):
+                    self._custom_vecs[v] = np.load(meta["path"]).astype(np.float32)
+                else:
+                    return "ef_dora"
+            return self._custom_vecs[v]
+        return v
 
     def piper_voice(self, voice_id):
         with self._lock:
@@ -466,13 +898,14 @@ class Engine:
                 self._piper[voice_id] = PiperVoice.load(onnx_p, config_path=json_p)
             return self._piper[voice_id]
 
-    def synth_kokoro(self, text, lang, speed):
-        v = cfg["voice_es"] if lang == "es" else cfg["voice_en"]
-        kl = "es" if lang == "es" else ("en-gb" if v.startswith("b") else "en-us")
+    def synth_kokoro(self, text, lang, speed, voice_override=None):
+        v = voice_override if voice_override is not None else (cfg["voice_es"] if lang == "es" else cfg["voice_en"])
+        kl = "es" if lang == "es" else ("en-gb" if isinstance(v, str) and v.startswith("b") else "en-us")
         k = self.kokoro()
+        v_arg = self._resolve_kokoro_voice(v)
         base_speed = float(max(0.5, min(1.85, speed)))
         with self._lock:
-            samples, sr = k.create(text, voice=v, speed=base_speed, lang=kl)
+            samples, sr = k.create(text, voice=v_arg, speed=base_speed, lang=kl)
         a = np.asarray(samples, dtype=np.float32).reshape(-1)
         if sr != SR:
             a = resample(a, sr, SR)

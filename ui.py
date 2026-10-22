@@ -309,6 +309,28 @@ def vec_icon(kind, size=16, color="#ededf7"):
         g.setPen(stroke)
         g.drawLine(QPointF(s * 0.28, s * 0.28), QPointF(s * 0.72, s * 0.72))
         g.drawLine(QPointF(s * 0.72, s * 0.28), QPointF(s * 0.28, s * 0.72))
+    elif kind == "mic":
+        g.setPen(stroke); g.setBrush(Qt.NoBrush)
+        g.drawRoundedRect(QRectF(s * 0.36, s * 0.16, s * 0.28, s * 0.44), s * 0.14, s * 0.14)
+        g.drawArc(QRectF(s * 0.24, s * 0.30, s * 0.52, s * 0.42), -180 * 16, 180 * 16)
+        g.drawLine(QPointF(s * 0.50, s * 0.72), QPointF(s * 0.50, s * 0.86))
+        g.drawLine(QPointF(s * 0.34, s * 0.86), QPointF(s * 0.66, s * 0.86))
+    elif kind == "help":
+        g.setPen(stroke); g.setBrush(Qt.NoBrush)
+        g.drawEllipse(QRectF(s * 0.16, s * 0.16, s * 0.68, s * 0.68))
+        g.drawArc(QRectF(s * 0.36, s * 0.28, s * 0.28, s * 0.22), 0 * 16, 180 * 16)
+        g.drawLine(QPointF(s * 0.64, s * 0.39), QPointF(s * 0.50, s * 0.52))
+        g.drawLine(QPointF(s * 0.50, s * 0.52), QPointF(s * 0.50, s * 0.57))
+        g.setPen(Qt.NoPen); g.setBrush(c)
+        g.drawEllipse(QPointF(s * 0.50, s * 0.69), s * 0.045, s * 0.045)
+    elif kind == "sparkle":
+        g.setPen(Qt.NoPen); g.setBrush(c)
+        g.drawPolygon(QPolygonF([
+            QPointF(s * 0.50, s * 0.14), QPointF(s * 0.60, s * 0.40),
+            QPointF(s * 0.86, s * 0.50), QPointF(s * 0.60, s * 0.60),
+            QPointF(s * 0.50, s * 0.86), QPointF(s * 0.40, s * 0.60),
+            QPointF(s * 0.14, s * 0.50), QPointF(s * 0.40, s * 0.40),
+        ]))
     g.end()
     return QIcon(pix)
 
@@ -317,8 +339,10 @@ def voices_for_engine(eng=None):
     if eng == "edge":
         return (EDGE_ES, EDGE_EN, "edge_es", "edge_en")
     if eng == "piper":
-        return (PIPER_ES, PIPER_EN, "piper_es", "piper_en")
-    return (KOKORO_ES, KOKORO_EN, "voice_es", "voice_en")
+        pes, pen = get_piper_lists()
+        return (pes, pen, "piper_es", "piper_en")
+    kes_l, ken_l = get_kokoro_lists()
+    return (kes_l, ken_l, "voice_es", "voice_en")
 
 def hide_on_close(w):
     w.closeEvent = lambda e: (e.ignore(), w.hide())
@@ -797,7 +821,7 @@ class JumpableTextEdit(QTextEdit):
 class ReaderWindow(QMainWindow):
     settings_changed = Signal()
 
-    def __init__(self, player, on_export, on_export_audiobook, on_ocr, on_read_page, on_history, on_settings, ensure_ready):
+    def __init__(self, player, on_export, on_export_audiobook, on_ocr, on_read_page, on_history, on_settings, ensure_ready, on_voice_studio=None, on_tutorial=None):
         super().__init__()
         self.setObjectName("win")
         self.player = player
@@ -806,6 +830,8 @@ class ReaderWindow(QMainWindow):
         self.on_ocr = on_ocr
         self.on_read_page = on_read_page
         self.ensure_ready = ensure_ready
+        self.on_voice_studio = on_voice_studio or on_settings
+        self.on_tutorial = on_tutorial
         self.fuente = "Lector"
         self._last_sent_span = None
         self._epub_chapters = None
@@ -815,7 +841,7 @@ class ReaderWindow(QMainWindow):
 
         self.setWindowTitle(APP)
         self.setWindowIcon(make_icon())
-        self.resize(1040, 720)
+        self.resize(1100, 720)
 
         root_w = QWidget()
         root_w.setObjectName("win")
@@ -829,7 +855,7 @@ class ReaderWindow(QMainWindow):
         header.setObjectName("headerBar")
         h_lay = QHBoxLayout(header)
         h_lay.setContentsMargins(16, 10, 16, 10)
-        h_lay.setSpacing(8)
+        h_lay.setSpacing(7)
 
         def top_btn(icon_name, text, cb, tip=""):
             b = QPushButton(f" {text}")
@@ -846,15 +872,15 @@ class ReaderWindow(QMainWindow):
         top_btn("paste", "Pegar", self.paste, "Pegar texto del portapapeles")
         top_btn("folder", "Abrir archivo", self.open_file, "Abrir TXT, PDF, Word (.docx) o libro ePub (.epub)")
         top_btn("globe", "Web / URL", self.open_url, "Extraer artículo o formulario desde una dirección web")
-        top_btn("page", "Leer página activa", self.on_read_page, "Extraer y leer la pestaña del navegador o formulario activo")
-        top_btn("ocr", "OCR pantalla", self.on_ocr, "Seleccionar una zona de la pantalla para leer texto en imágenes")
+        top_btn("page", "Leer página", self.on_read_page, "Extraer y leer la pestaña del navegador o formulario activo")
+        top_btn("ocr", "OCR", self.on_ocr, "Seleccionar una zona de la pantalla para leer texto en imágenes")
 
         h_lay.addStretch(1)
 
-        top_btn("bookmark", "Guardar marcador", self.manual_bookmark, "Guardar posición actual para retomar más tarde")
+        top_btn("bookmark", "Marcador", self.manual_bookmark, "Guardar posición actual para retomar más tarde")
 
         # Botón desplegable único para Exportar (Audio único o Audiolibro por capítulos)
-        self.b_export = QPushButton(" Exportar audio ▾")
+        self.b_export = QPushButton(" Exportar ▾")
         self.b_export.setObjectName("ghost")
         self.b_export.setIcon(vec_icon("export", 15, "#dcdcf0"))
         self.b_export.setIconSize(QSize(15, 15))
@@ -865,8 +891,11 @@ class ReaderWindow(QMainWindow):
         self.b_export.setMenu(exp_menu)
         h_lay.addWidget(self.b_export)
 
+        top_btn("sparkle", "Mi Voz", self.on_voice_studio, "Abrir Estudio de Voz: clonar o diseñar tu propia voz por única vez")
         top_btn("history", "Historial", on_history, "Ver historial de lecturas y marcadores guardados")
         top_btn("settings", "Ajustes", on_settings, "Configurar motor de voz, atajos y diccionario de pronunciación")
+        if self.on_tutorial:
+            top_btn("help", "Tutorial", self.on_tutorial, "Ver guía interactiva y consejos de uso de Lector Libre")
 
         root_lay.addWidget(header)
 
@@ -1445,16 +1474,20 @@ class HistoryWindow(QWidget):
 # ---------- configuración con Piper (#7), Atajos (#1,#5,#6) y Diccionario de pronunciación (#12) ----------
 class _HK(QObject):
     got = Signal(object, str)
+    rec_done = Signal(object, str)
 
 class SettingsDialog(QDialog):
     def __init__(self, on_saved, parent=None):
         super().__init__(parent)
         self.on_saved = on_saved
-        self.setWindowTitle(f"Configuración · {APP}")
+        self.setWindowTitle(f"Configuración y Estudio de Voz · {APP}")
         self.setWindowIcon(make_icon())
-        self.setMinimumSize(580, 580)
+        self.setMinimumSize(680, 650)
         self.hk = _HK()
         self.hk.got.connect(lambda w, t: (w.setText(t), w.setEnabled(True)))
+        self.hk.rec_done.connect(self._on_mic_finished)
+        self._recording = False
+        self._last_recorded_audio = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 18, 18, 18)
@@ -1462,16 +1495,16 @@ class SettingsDialog(QDialog):
         self.tabs = QTabWidget()
         root.addWidget(self.tabs)
 
-        # Tab 1: General y Voces
+        # ---------------- Tab 1: General y Voces ----------------
         t_gen = QWidget()
         f = QFormLayout(t_gen)
         f.setContentsMargins(18, 18, 18, 18)
         f.setVerticalSpacing(11)
 
         self.engine = QComboBox()
-        self.engine.addItem("Kokoro (local, sin internet)", "kokoro")
-        self.engine.addItem("Piper (local, voces español latinoamericano)", "piper")
-        self.engine.addItem("Edge (online, gratis)", "edge")
+        self.engine.addItem("Kokoro (local, sin internet · soporta Mi Voz .npy)", "kokoro")
+        self.engine.addItem("Piper (local, voces español latinoamericano .onnx)", "piper")
+        self.engine.addItem("Edge Neural HD (online, gratis, multilingüe)", "edge")
         self.engine.currentIndexChanged.connect(self._fill_voices)
         f.addRow("Motor de voz", self.engine)
 
@@ -1511,13 +1544,180 @@ class SettingsDialog(QDialog):
         self.autostart = QCheckBox("Iniciar Lector Libre con Windows")
         f.addRow("", self.autostart)
 
-        test = QPushButton(" Probar voz")
+        test = QPushButton(" Probar voz activa")
         test.setIcon(vec_icon("volume", 16, "#ececf4"))
         test.clicked.connect(self._test)
         f.addRow("", test)
         self.tabs.addTab(t_gen, "Voces y Atajos")
 
-        # Tab 2: Diccionario de pronunciación (#12)
+        # ---------------- Tab 2: Estudio de Voz (Clonar / Diseñar por única vez) ----------------
+        t_studio = QWidget()
+        vs = QVBoxLayout(t_studio)
+        vs.setContentsMargins(16, 14, 16, 14)
+        vs.setSpacing(10)
+
+        # Tarjeta de consejos prácticos + Guion sugerido
+        tips_card = QFrame()
+        tips_card.setObjectName("tipsCard")
+        tips_card.setStyleSheet(
+            "QFrame#tipsCard{background:#181b28;border:1px solid #2d334d;border-radius:11px;padding:8px 12px}"
+        )
+        tc_lay = QVBoxLayout(tips_card)
+        tc_lay.setContentsMargins(6, 4, 6, 4)
+        tc_lay.setSpacing(6)
+
+        lbl_tips_title = QLabel("★ CLONACIÓN Y DISEÑO DE VOZ POR ÚNICA VEZ (0% USO EXTRA DE CPU/GPU AL LEER)")
+        lbl_tips_title.setStyleSheet("color:#b49eff;font-size:8.5pt;font-weight:700;letter-spacing:0.5px;border:none")
+        tc_lay.addWidget(lbl_tips_title)
+
+        lbl_tips = QLabel(
+            "• <b>Cómo enviar o grabar el mejor audio:</b> Grabá entre <b>12 y 20 segundos</b> en un lugar silencioso (sin eco ni música), "
+            "a <b>15–20 cm</b> del micrófono, con tu tono y ritmo natural de lectura.<br>"
+            "• <b>Cómo funciona:</b> Tu grabación se analiza <b>una sola vez</b> para hornear una huella matemática liviana (<code>.npy</code> de 512 KB). "
+            "Una vez guardada, funciona igual de rápido que las voces nativas sin exigir el procesador."
+        )
+        lbl_tips.setWordWrap(True)
+        lbl_tips.setStyleSheet("color:#cfd3e8;font-size:9pt;border:none")
+        tc_lay.addWidget(lbl_tips)
+
+        script_row = QHBoxLayout()
+        lbl_sc = QLabel("Texto sugerido para leer al grabar:")
+        lbl_sc.setStyleSheet("color:#9ca3c4;font-size:8.5pt;font-weight:600;border:none")
+        script_row.addWidget(lbl_sc)
+        self.st_script_combo = QComboBox()
+        for title, body in VOICE_SCRIPTS:
+            self.st_script_combo.addItem(title, body)
+        self.st_script_combo.currentIndexChanged.connect(self._on_script_changed)
+        script_row.addWidget(self.st_script_combo, 1)
+        tc_lay.addLayout(script_row)
+
+        self.st_script_box = QLabel(VOICE_SCRIPTS[0][1])
+        self.st_script_box.setWordWrap(True)
+        self.st_script_box.setStyleSheet(
+            "background:#12141e;border:1px solid #353b58;border-radius:8px;padding:8px 10px;"
+            "color:#f0f0fa;font-size:9.5pt;font-style:italic"
+        )
+        tc_lay.addWidget(self.st_script_box)
+        vs.addWidget(tips_card)
+
+        # Fila de captura / subida de muestra de voz
+        cap_row = QHBoxLayout()
+        cap_row.setSpacing(8)
+        self.b_mic_rec = QPushButton(" Grabar mi voz (15 s)")
+        self.b_mic_rec.setIcon(vec_icon("mic", 15, "#ffffff"))
+        self.b_mic_rec.setObjectName("primary")
+        self.b_mic_rec.clicked.connect(self._toggle_mic_record)
+        cap_row.addWidget(self.b_mic_rec)
+
+        b_up_wav = QPushButton(" Subir audio (.wav / .mp3)")
+        b_up_wav.setIcon(vec_icon("folder", 15, "#ececf4"))
+        b_up_wav.clicked.connect(self._upload_voice_sample)
+        cap_row.addWidget(b_up_wav)
+
+        self.b_play_sample = QPushButton(" Escuchar mi muestra")
+        self.b_play_sample.setIcon(vec_icon("play", 14, "#ececf4"))
+        self.b_play_sample.setEnabled(False)
+        self.b_play_sample.clicked.connect(self._play_recorded_sample)
+        cap_row.addWidget(self.b_play_sample)
+        cap_row.addStretch()
+        vs.addLayout(cap_row)
+
+        self.st_analysis_lbl = QLabel("Subí un audio o grabá con el micrófono para analizar tu timbre automáticamente (o diseñalo con los controles de abajo).")
+        self.st_analysis_lbl.setWordWrap(True)
+        self.st_analysis_lbl.setStyleSheet("color:#a594ff;font-size:8.5pt;font-weight:600")
+        vs.addWidget(self.st_analysis_lbl)
+
+        # Formulario de ajuste fino del vector .npy
+        form_card = QFrame()
+        form_card.setObjectName("formCard")
+        form_card.setStyleSheet("QFrame#formCard{background:#151822;border:1px solid #24293b;border-radius:11px;padding:6px 10px}")
+        fc_lay = QFormLayout(form_card)
+        fc_lay.setContentsMargins(8, 6, 8, 6)
+        fc_lay.setVerticalSpacing(7)
+
+        name_lang_row = QHBoxLayout()
+        self.st_name = QLineEdit("Mi Voz Natural")
+        self.st_name.setPlaceholderText("Nombre para guardar tu voz (ej. Mi Voz)")
+        name_lang_row.addWidget(self.st_name, 1)
+        self.st_lang = QComboBox()
+        self.st_lang.addItem("Español", "es")
+        self.st_lang.addItem("Inglés", "en")
+        name_lang_row.addWidget(self.st_lang)
+        fc_lay.addRow("Nombre e idioma:", name_lang_row)
+
+        bases_row = QHBoxLayout()
+        self.st_base1 = QComboBox()
+        self.st_base2 = QComboBox()
+        for vid, vlbl in STUDIO_BASE_VOICES:
+            self.st_base1.addItem(vlbl, vid)
+            self.st_base2.addItem(vlbl, vid)
+        self.st_base1.setCurrentIndex(1)  # pm_alex
+        self.st_base2.setCurrentIndex(7)  # am_fenrir
+        bases_row.addWidget(self.st_base1, 1)
+        bases_row.addWidget(QLabel("+"))
+        bases_row.addWidget(self.st_base2, 1)
+        fc_lay.addRow("Timbres base:", bases_row)
+
+        def make_slider_row(min_v, max_v, init_v, suffix="%"):
+            w = QWidget()
+            h = QHBoxLayout(w)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(8)
+            s = QSlider(Qt.Horizontal)
+            s.setRange(min_v, max_v)
+            s.setValue(init_v)
+            lbl = QLabel(f"{init_v:+d}{suffix}" if min_v < 0 else f"{init_v}{suffix}")
+            lbl.setFixedWidth(48)
+            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            lbl.setStyleSheet("color:#b6bbd4;font-size:8.5pt;border:none")
+            s.valueChanged.connect(lambda v: lbl.setText(f"{v:+d}{suffix}" if min_v < 0 else f"{v}{suffix}"))
+            h.addWidget(s, 1)
+            h.addWidget(lbl)
+            return w, s
+
+        w_mix, self.sl_mix = make_slider_row(0, 100, 35)
+        w_dep, self.sl_depth = make_slider_row(-100, 100, 10)
+        w_war, self.sl_warmth = make_slider_row(-100, 100, 20)
+        w_exp, self.sl_expr = make_slider_row(-100, 100, 15)
+
+        fc_lay.addRow("Mezcla (Base 1 ↔ Base 2):", w_mix)
+        fc_lay.addRow("Cuerpo (Agudo ↔ Profundo):", w_dep)
+        fc_lay.addRow("Timbre (Brillante ↔ Cálido):", w_war)
+        fc_lay.addRow("Cadencia (Calma ↔ Expresiva):", w_exp)
+        vs.addWidget(form_card)
+
+        # Botones de Previsualizar y Guardar huella fija .npy
+        act_row = QHBoxLayout()
+        b_prev_st = QPushButton(" Probar cómo suena esta voz")
+        b_prev_st.setIcon(vec_icon("volume", 15, "#ececf4"))
+        b_prev_st.clicked.connect(self._preview_studio_voice)
+        act_row.addWidget(b_prev_st)
+
+        b_save_st = QPushButton(" Guardar como voz fija (.npy · 0% CPU extra)")
+        b_save_st.setObjectName("primary")
+        b_save_st.setIcon(vec_icon("sparkle", 15, "#ffffff"))
+        b_save_st.clicked.connect(self._save_studio_voice)
+        act_row.addWidget(b_save_st, 1)
+        vs.addLayout(act_row)
+
+        # Lista de voces personalizadas ya creadas + importar Piper .onnx
+        cust_row = QHBoxLayout()
+        self.st_custom_combo = QComboBox()
+        self.st_custom_combo.setPlaceholderText("Tus voces personalizadas aparecerán acá...")
+        cust_row.addWidget(QLabel("Mis voces:"), 0)
+        cust_row.addWidget(self.st_custom_combo, 1)
+        b_del_cust = QPushButton("Eliminar")
+        b_del_cust.clicked.connect(self._delete_selected_custom_voice)
+        cust_row.addWidget(b_del_cust)
+        b_imp_onnx = QPushButton("Importar .onnx (Piper)")
+        b_imp_onnx.setToolTip("Importar un archivo .onnx + .onnx.json entrenado para Piper")
+        b_imp_onnx.clicked.connect(self._import_piper_onnx_dialog)
+        cust_row.addWidget(b_imp_onnx)
+        vs.addLayout(cust_row)
+
+        self.tabs.addTab(t_studio, "★ Estudio de Voz (Clonar / Crear)")
+
+        # ---------------- Tab 3: Diccionario de pronunciación (#12) ----------------
         t_pron = QWidget()
         vp = QVBoxLayout(t_pron)
         vp.setContentsMargins(18, 18, 18, 18)
@@ -1558,6 +1758,218 @@ class SettingsDialog(QDialog):
         bb.rejected.connect(self.reject)
         root.addWidget(bb)
         self.load()
+
+    def _on_script_changed(self, idx):
+        txt = self.st_script_combo.itemData(idx)
+        if txt:
+            self.st_script_box.setText(txt)
+
+    def _toggle_mic_record(self):
+        if self._recording:
+            self._recording = False
+            self.b_mic_rec.setText(" Procesando muestra...")
+            self.b_mic_rec.setEnabled(False)
+            return
+        self._recording = True
+        self.b_mic_rec.setText("⏹ Detener grabación (grabando...)")
+
+        def rec_worker():
+            try:
+                import sounddevice as sd
+                frames = []
+                block = int(SR * 0.1)
+                max_blocks = 150  # 15 segundos máx
+                with sd.InputStream(samplerate=SR, channels=1, dtype="float32", blocksize=block) as stream:
+                    for _ in range(max_blocks):
+                        if not self._recording:
+                            break
+                        data, _ = stream.read(block)
+                        frames.append(np.asarray(data, dtype=np.float32).reshape(-1))
+                self._recording = False
+                if not frames:
+                    self.hk.rec_done.emit(None, "Grabación cancelada.")
+                    return
+                audio = np.concatenate(frames)
+                self.hk.rec_done.emit(audio, "")
+            except Exception as e:
+                self._recording = False
+                self.hk.rec_done.emit(None, f"No se pudo acceder al micrófono: {e}")
+
+        threading.Thread(target=rec_worker, daemon=True).start()
+
+    def _on_mic_finished(self, audio, err):
+        self.b_mic_rec.setEnabled(True)
+        self.b_mic_rec.setText(" Grabar mi voz (15 s)")
+        if err:
+            QMessageBox.warning(self, APP, err)
+            return
+        if audio is not None:
+            self._last_recorded_audio = audio
+            self.b_play_sample.setEnabled(True)
+            self._apply_sample_analysis(audio)
+
+    def _upload_voice_sample(self):
+        p, _ = QFileDialog.getOpenFileName(
+            self,
+            "Seleccionar grabación de muestra de voz",
+            "",
+            "Archivos de audio (*.wav *.mp3 *.flac *.ogg);;Todos (*.*)",
+        )
+        if not p:
+            return
+        try:
+            audio = load_audio_any(p, SR)
+            self._last_recorded_audio = audio
+            self.b_play_sample.setEnabled(True)
+            base_title = os.path.splitext(os.path.basename(p))[0][:24]
+            self.st_name.setText(f"Mi Voz ({base_title})")
+            self._apply_sample_analysis(audio)
+        except Exception as e:
+            QMessageBox.warning(self, APP, f"No se pudo analizar el archivo de audio:\n{e}")
+
+    def _apply_sample_analysis(self, audio):
+        try:
+            info = analyze_voice_sample(audio, SR)
+        except Exception as e:
+            QMessageBox.warning(self, APP, str(e))
+            return
+        self.st_analysis_lbl.setText("✓ " + info["summary"])
+        i1 = self.st_base1.findData(info["base1"])
+        i2 = self.st_base2.findData(info["base2"])
+        if i1 >= 0:
+            self.st_base1.setCurrentIndex(i1)
+        if i2 >= 0:
+            self.st_base2.setCurrentIndex(i2)
+        self.sl_mix.setValue(info["mix_pct"])
+        self.sl_depth.setValue(info["depth_pct"])
+        self.sl_warmth.setValue(info["warmth_pct"])
+        self.sl_expr.setValue(info["expr_pct"])
+
+    def _play_recorded_sample(self):
+        if self._last_recorded_audio is None:
+            return
+        arr = self._last_recorded_audio
+
+        def run():
+            try:
+                import sounddevice as sd
+                sd.play(arr, SR)
+                sd.wait()
+            except Exception as e:
+                log("play_sample", e)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _build_current_studio_vec(self):
+        return build_custom_kokoro_vector(
+            base1=self.st_base1.currentData(),
+            base2=self.st_base2.currentData(),
+            mix_pct=self.sl_mix.value(),
+            depth_pct=self.sl_depth.value(),
+            warmth_pct=self.sl_warmth.value(),
+            expr_pct=self.sl_expr.value(),
+            lang=self.st_lang.currentData(),
+        )
+
+    def _preview_studio_voice(self):
+        try:
+            vec = self._build_current_studio_vec()
+        except Exception as e:
+            QMessageBox.warning(self, APP, str(e))
+            return
+        lang = self.st_lang.currentData()
+        sample_txt = (
+            "Hola, esta es mi nueva voz personalizada en Lector Libre. Se calcula una sola vez y lee al instante sin usar recursos extra."
+            if lang == "es"
+            else "Hello, this is my custom voice profile in Lector Libre, pre-computed once for instant reading."
+        )
+
+        def run():
+            try:
+                import sounddevice as sd
+                a = engine.synth_kokoro(sample_txt, lang, cfg.get("speed", 1.0), voice_override=vec)
+                sd.play(a, SR)
+                sd.wait()
+            except Exception as e:
+                log("preview_studio", e)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _save_studio_voice(self):
+        try:
+            vec = self._build_current_studio_vec()
+            lang = self.st_lang.currentData()
+            vid = save_custom_kokoro_voice(
+                name=self.st_name.text(),
+                vec=vec,
+                lang=lang,
+                details={
+                    "base1": self.st_base1.currentData(),
+                    "base2": self.st_base2.currentData(),
+                    "mix": self.sl_mix.value(),
+                    "depth": self.sl_depth.value(),
+                    "warmth": self.sl_warmth.value(),
+                    "expr": self.sl_expr.value(),
+                },
+            )
+        except Exception as e:
+            QMessageBox.warning(self, APP, f"No se pudo guardar la voz:\n{e}")
+            return
+
+        cfg["engine"] = "kokoro"
+        cfg["voice_es" if lang == "es" else "voice_en"] = vid
+        save_cfg()
+        self.engine.setCurrentIndex(max(0, self.engine.findData("kokoro")))
+        self._fill_voices()
+        self._refresh_custom_combo()
+        self.on_saved()
+        QMessageBox.information(
+            self,
+            APP,
+            f"¡Voz «{voice_label(vid)}» guardada y activada!\n\n"
+            "Su huella acústica (.npy de 512 KB) quedó pre-calculada en disco: "
+            "ahora podés usarla siempre sin ningún consumo extra de CPU o GPU.",
+        )
+
+    def _refresh_custom_combo(self):
+        self.st_custom_combo.clear()
+        for vid, meta in load_custom_voices().items():
+            self.st_custom_combo.addItem(f"{meta.get('label', vid)} ({meta.get('created', '')})", vid)
+
+    def _delete_selected_custom_voice(self):
+        vid = self.st_custom_combo.currentData()
+        if not vid:
+            return
+        delete_custom_voice(vid)
+        self._refresh_custom_combo()
+        self._fill_voices()
+        self.on_saved()
+
+    def _import_piper_onnx_dialog(self):
+        p, _ = QFileDialog.getOpenFileName(
+            self,
+            "Importar modelo de voz Piper (.onnx)",
+            "",
+            "Modelo ONNX de Piper (*.onnx)",
+        )
+        if not p:
+            return
+        name, ok = QInputDialog.getText(self, APP, "Nombre para mostrar de esta voz:", text=os.path.splitext(os.path.basename(p))[0])
+        if not ok:
+            return
+        try:
+            vid = import_custom_piper_voice(p, name=name, lang=self.st_lang.currentData())
+        except Exception as e:
+            QMessageBox.warning(self, APP, str(e))
+            return
+        cfg["engine"] = "piper"
+        cfg["piper_es" if self.st_lang.currentData() == "es" else "piper_en"] = vid
+        save_cfg()
+        self.engine.setCurrentIndex(max(0, self.engine.findData("piper")))
+        self._fill_voices()
+        self._refresh_custom_combo()
+        self.on_saved()
+        QMessageBox.information(self, APP, f"Modelo Piper «{voice_label(vid)}» importado y activado.")
 
     def _add_pron_row(self, k="", v=""):
         r = self.pron_table.rowCount()
@@ -1644,6 +2056,7 @@ class SettingsDialog(QDialog):
     def load(self):
         self.engine.setCurrentIndex(max(0, self.engine.findData(cfg.get("engine"))))
         self._fill_voices()
+        self._refresh_custom_combo()
         self.lang.setCurrentIndex(max(0, self.lang.findData(cfg.get("lang_default"))))
         self.auto.setChecked(cfg.get("autodetect", True))
         self.speed.setCurrentIndex(max(0, self.speed.findData(round(cfg.get("speed", 1.0) * 4) / 4)))
@@ -1734,3 +2147,246 @@ class SettingsDialog(QDialog):
         save_cfg()
         self.accept()
         self.on_saved()
+
+
+# ---------- Tutorial de Bienvenida Interactivo (con opción "No volver a mostrar") ----------
+class WelcomeTutorialDialog(QDialog):
+    def __init__(self, on_open_voice_studio=None, parent=None):
+        super().__init__(parent)
+        self.on_open_voice_studio = on_open_voice_studio
+        self.setWindowTitle(f"Guía Rápida de Bienvenida · {APP}")
+        self.setWindowIcon(make_icon())
+        self.setFixedSize(780, 520)
+        self.step = 0
+
+        self.slides = [
+            {
+                "badge": "PASO 1 DE 5  ·  BIENVENIDA Y MODOS DE USO",
+                "title": "Dos formas de usar Lector Libre: Píldora Flotante y Estudio",
+                "icon": "expand",
+                "body": (
+                    "<p style='font-size:10.5pt;color:#e4e6f5;line-height:1.45'>"
+                    "<b>Lector Libre</b> está diseñado para acompañarte mientras leés en cualquier programa de Windows sin estorbar:"
+                    "</p>"
+                    "<ul style='font-size:10pt;color:#cfd3e8;line-height:1.55'>"
+                    "<li><b>Botón Flotante Compacto:</b> Una micro-píldora siempre visible (<code>▶ ||| ⤢</code>) que podés arrastrar a cualquier rincón de tu pantalla.</li>"
+                    "<li><b>Reproductor Flotante Expandido:</b> Tocá <b>⤢</b> en la píldora para desplegar los controles rápidos de página, OCR, velocidad, voz y progreso.</li>"
+                    "<li><b>Ventana Principal de Estudio:</b> Ideal para libros largos (PDF, Word, ePub), artículos web y exportación a audiolibros.</li>"
+                    "</ul>"
+                ),
+                "tip": "Consejo: En Ajustes podés elegir si preferís que el reproductor flotante inicie en modo compacto o expandido.",
+            },
+            {
+                "badge": "PASO 2 DE 5  ·  LECTURA INSTANTÁNEA EN CUALQUIER APP",
+                "title": "Cuatro formas de leer sin tener que copiar ni pegar",
+                "icon": "page",
+                "body": (
+                    f"<ul style='font-size:10pt;color:#cfd3e8;line-height:1.55'>"
+                    f"<li><b>1. Leer desde el cursor o selección (<code>{cfg.get('hk_read', 'ctrl+alt+r').upper()}</code> o botón ▶):</b> "
+                    "Si seleccionás texto, lee solo eso. Si <b>no seleccionás nada</b> y solo dejás el cursor parpadeando en Word, un PDF o una web, lee desde esa posición hasta que lo detengas.</li>"
+                    f"<li><b>2. Leer esta página / formulario (<code>{cfg.get('hk_page', 'ctrl+alt+w').upper()}</code> o botón de página):</b> "
+                    "Extrae automáticamente el artículo, preguntas y respuestas de la pestaña activa del navegador (ej. Acts 29), saltando menús y pies de página.</li>"
+                    f"<li><b>3. OCR de zona de pantalla (<code>{cfg.get('hk_ocr', 'ctrl+alt+o').upper()}</code> o botón de lupa):</b> "
+                    "Dibujá un recuadro sobre cualquier imagen, gráfico o PDF escaneado que no permita copiar texto y Lector Libre lo reconoce y lo lee al instante.</li>"
+                    "</ul>"
+                ),
+                "tip": "Consejo: Podés hacer clic directamente en los botones del reproductor flotante: Lector Libre recuerda cuál era tu ventana activa.",
+            },
+            {
+                "badge": "PASO 3 DE 5  ·  ESTUDIO DE LECTURA Y AUDIOLIBROS",
+                "title": "Navegación por oraciones, capítulos, marcadores y velocidad hasta 4×",
+                "icon": "chapters",
+                "body": (
+                    "<ul style='font-size:10pt;color:#cfd3e8;line-height:1.55'>"
+                    "<li><b>Doble clic para saltar:</b> En el Estudio de lectura, hacé <b>doble clic sobre cualquier oración</b> para empezar a escuchar desde ese punto exacto.</li>"
+                    "<li><b>Velocidad natural hasta 4× en vivo:</b> Cambiá la velocidad o la voz mientras escucha sin reiniciar la oración actual y manteniendo el tono natural de la voz.</li>"
+                    "<li><b>Índice de capítulos y Marcadores:</b> Tus lecturas largas guardan progreso automáticamente para retomar donde quedaste con un clic.</li>"
+                    "<li><b>Exportar como Audiolibro:</b> Desde el botón <b>Exportar ▾</b> podés convertir un documento o libro ePub entero en archivos MP3 separados por capítulo.</li>"
+                    "</ul>"
+                ),
+                "tip": "Consejo: Arrastrá la barra deslizable inferior en cualquier momento para adelantar o retroceder dentro del documento.",
+            },
+            {
+                "badge": "PASO 4 DE 5  ·  ESTUDIO DE VOZ (CLONAR / DISEÑAR UNA VEZ)",
+                "title": "Creá o cloná tu propia voz por única vez con 0% de uso extra de CPU",
+                "icon": "sparkle",
+                "body": (
+                    "<p style='font-size:10pt;color:#e4e6f5;line-height:1.45'>"
+                    "Desde el botón <b>★ Mi Voz</b> (o en <b>Ajustes → Estudio de Voz</b>) podés crear una voz a tu medida:"
+                    "</p>"
+                    "<ul style='font-size:10pt;color:#cfd3e8;line-height:1.55'>"
+                    "<li><b>Grabá o subí tu voz una sola vez (12 a 20 seg):</b> Lector Libre mide tu tono fundamental, calidez de pecho, claridad y cadencia.</li>"
+                    "<li><b>Se guarda como huella fija (<code>.npy</code> de 512 KB):</b> A diferencia de otros clonadores que exigen placa de video en cada frase, acá la huella se calcula <b>una única vez</b> y después lee al instante sin gastar CPU ni GPU.</li>"
+                    "<li><b>Consejos al grabar:</b> Hablá en un lugar sin eco, a 15–20 cm del micrófono, leyendo el guion sugerido en pantalla con tu ritmo natural.</li>"
+                    "</ul>"
+                ),
+                "tip": "Consejo: También podés ajustar manualmente los deslizadores de Cuerpo, Calidez y Expresividad antes de guardar tu voz.",
+            },
+            {
+                "badge": "PASO 5 DE 5  ·  PRONUNCIACIÓN Y MOTORES DE VOZ",
+                "title": "Diccionario de Pronunciación y 3 motores incluidos",
+                "icon": "volume",
+                "body": (
+                    "<ul style='font-size:10pt;color:#cfd3e8;line-height:1.55'>"
+                    "<li><b>Diccionario de Pronunciación:</b> En <b>Ajustes → Diccionario de pronunciación</b> podés definir cómo querés que se lean siglas, nombres o términos en inglés (por ejemplo, <i>«Acts 29»</i> se lee automáticamente como <i>«Hechos veintinueve»</i>).</li>"
+                    "<li><b>Kokoro Local (sin internet):</b> Incluye voces Studio en español e inglés y soporta tus voces personalizadas <code>.npy</code>.</li>"
+                    "<li><b>Piper Local (latinoamericano):</b> Voces locales para Argentina y México que funcionan 100% sin conexión.</li>"
+                    "<li><b>Edge Neural HD (online):</b> Voces neurales multilingües de alta definición de Argentina, Uruguay, Chile, Colombia, México, España y EE. UU.</li>"
+                    "</ul>"
+                ),
+                "tip": "Podés volver a abrir este tutorial cuando quieras desde el botón «? Tutorial» arriba a la derecha.",
+            },
+        ]
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 20, 20, 18)
+        root.setSpacing(14)
+
+        body_h = QHBoxLayout()
+        body_h.setSpacing(14)
+
+        # Columna izquierda: pasos
+        nav_card = QFrame()
+        nav_card.setObjectName("sideCard")
+        nav_card.setFixedWidth(224)
+        nl = QVBoxLayout(nav_card)
+        nl.setContentsMargins(10, 12, 10, 12)
+        nl.setSpacing(6)
+        lbl_nav = QLabel("GUÍA INTERACTIVA")
+        lbl_nav.setStyleSheet("color:#8f95b2;font-size:8pt;font-weight:700;letter-spacing:0.8px;border:none")
+        nl.addWidget(lbl_nav)
+
+        self.step_btns = []
+        step_titles = [
+            "1. Modos de uso",
+            "2. Lectura instantánea",
+            "3. Estudio y Audiolibros",
+            "4. Estudio de Voz (Clonar)",
+            "5. Pronunciación y Motores",
+        ]
+        for idx, st_t in enumerate(step_titles):
+            b = QPushButton(st_t)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _, i=idx: self._set_step(i))
+            nl.addWidget(b)
+            self.step_btns.append(b)
+        nl.addStretch(1)
+        body_h.addWidget(nav_card)
+
+        # Tarjeta derecha: contenido del paso
+        content_card = QFrame()
+        content_card.setObjectName("readerCard")
+        cl = QVBoxLayout(content_card)
+        cl.setContentsMargins(22, 18, 22, 18)
+        cl.setSpacing(10)
+
+        top_badge_row = QHBoxLayout()
+        self.ic_lbl = QLabel()
+        top_badge_row.addWidget(self.ic_lbl)
+        self.badge_lbl = QLabel()
+        self.badge_lbl.setStyleSheet("color:#a594ff;font-size:8.5pt;font-weight:700;letter-spacing:0.8px")
+        top_badge_row.addWidget(self.badge_lbl)
+        top_badge_row.addStretch()
+        cl.addLayout(top_badge_row)
+
+        self.title_lbl = QLabel()
+        self.title_lbl.setWordWrap(True)
+        self.title_lbl.setStyleSheet("color:#ffffff;font-size:14pt;font-weight:700")
+        cl.addWidget(self.title_lbl)
+
+        self.body_lbl = QLabel()
+        self.body_lbl.setWordWrap(True)
+        self.body_lbl.setTextFormat(Qt.RichText)
+        cl.addWidget(self.body_lbl, 1)
+
+        self.tip_frame = QFrame()
+        self.tip_frame.setObjectName("tipFrame")
+        self.tip_frame.setStyleSheet(
+            "QFrame#tipFrame{background:#1b1e2e;border:1px solid #383e5e;border-radius:10px;padding:8px 12px}"
+        )
+        tf_lay = QHBoxLayout(self.tip_frame)
+        tf_lay.setContentsMargins(6, 4, 6, 4)
+        self.tip_lbl = QLabel()
+        self.tip_lbl.setWordWrap(True)
+        self.tip_lbl.setStyleSheet("color:#c4c8e0;font-size:9pt;border:none")
+        tf_lay.addWidget(self.tip_lbl)
+        cl.addWidget(self.tip_frame)
+
+        body_h.addWidget(content_card, 1)
+        root.addLayout(body_h, 1)
+
+        # Barra inferior con checkbox "No volver a mostrar" y botones Anterior / Siguiente
+        foot = QHBoxLayout()
+        self.chk_dont_show = QCheckBox("No volver a mostrar este tutorial al abrir la aplicación")
+        self.chk_dont_show.setChecked(not cfg.get("show_welcome_tutorial", True) or True)
+        foot.addWidget(self.chk_dont_show)
+        foot.addStretch(1)
+
+        if self.on_open_voice_studio:
+            self.b_go_studio = QPushButton(" Ir al Estudio de Voz")
+            self.b_go_studio.setIcon(vec_icon("sparkle", 14, "#dcdcf0"))
+            self.b_go_studio.clicked.connect(self._open_studio_now)
+            foot.addWidget(self.b_go_studio)
+
+        self.b_prev = QPushButton("Anterior")
+        self.b_prev.clicked.connect(lambda: self._set_step(self.step - 1))
+        foot.addWidget(self.b_prev)
+
+        self.b_next = QPushButton("Siguiente →")
+        self.b_next.setObjectName("primary")
+        self.b_next.clicked.connect(self._next_or_finish)
+        foot.addWidget(self.b_next)
+
+        root.addLayout(foot)
+        self._set_step(0)
+
+    def _set_step(self, idx):
+        self.step = max(0, min(idx, len(self.slides) - 1))
+        s = self.slides[self.step]
+        self.ic_lbl.setPixmap(vec_icon(s["icon"], 20, "#a594ff").pixmap(20, 20))
+        self.badge_lbl.setText(s["badge"])
+        self.title_lbl.setText(s["title"])
+        self.body_lbl.setText(s["body"])
+        self.tip_lbl.setText("💡 " + s["tip"])
+
+        for i, b in enumerate(self.step_btns):
+            if i == self.step:
+                b.setStyleSheet(
+                    "QPushButton{background:rgba(124,92,255,65);border:1px solid #8f74ff;"
+                    "color:#ffffff;font-weight:700;text-align:left;padding:7px 10px;border-radius:8px}"
+                )
+            else:
+                b.setStyleSheet(
+                    "QPushButton{background:transparent;border:1px solid transparent;"
+                    "color:#9ca3c4;font-weight:500;text-align:left;padding:7px 10px;border-radius:8px}"
+                    "QPushButton:hover{background:rgba(255,255,255,10);color:#ececf4}"
+                )
+
+        self.b_prev.setEnabled(self.step > 0)
+        if self.step == len(self.slides) - 1:
+            self.b_next.setText("¡Empezar a usar Lector Libre!")
+        else:
+            self.b_next.setText("Siguiente →")
+
+    def _save_pref(self):
+        cfg["first_run"] = False
+        cfg["show_welcome_tutorial"] = not self.chk_dont_show.isChecked()
+        save_cfg()
+
+    def _open_studio_now(self):
+        self._save_pref()
+        self.accept()
+        if self.on_open_voice_studio:
+            self.on_open_voice_studio()
+
+    def _next_or_finish(self):
+        if self.step < len(self.slides) - 1:
+            self._set_step(self.step + 1)
+        else:
+            self._save_pref()
+            self.accept()
+
+    def closeEvent(self, e):
+        self._save_pref()
+        super().closeEvent(e)
+

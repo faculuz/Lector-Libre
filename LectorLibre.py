@@ -1,5 +1,5 @@
 # Lector Libre - lector de texto en voz alta gratuito para Windows
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 REPO = "faculuz/Lector-Libre"
 AUMID = "FacundoLuzardo.LectorLibre"
 
@@ -79,7 +79,7 @@ from core import (
 )
 from ui import (
     QSS, make_icon, MiniPlayer, ReaderWindow, HistoryWindow, SettingsDialog,
-    ScreenOcrSelector, run_with_progress
+    WelcomeTutorialDialog, ScreenOcrSelector, run_with_progress
 )
 
 try:
@@ -130,6 +130,8 @@ class App(QObject):
             on_history=self.open_history,
             on_settings=self.open_settings,
             ensure_ready=self.ensure_models,
+            on_voice_studio=self.open_voice_studio,
+            on_tutorial=self.show_welcome,
         )
         self.mini.settings_changed.connect(self.reader.refresh_voices)
         self.reader.settings_changed.connect(self.mini.refresh_voices)
@@ -162,7 +164,7 @@ class App(QObject):
 
         threading.Thread(target=self.updater_worker, daemon=True).start()
 
-        if cfg.get("first_run", True):
+        if cfg.get("show_welcome_tutorial", True):
             QTimer.singleShot(500, self.show_welcome)
         elif cfg.get("engine") in ("kokoro", "piper") and not models_ready():
             QTimer.singleShot(1500, self.ensure_models)
@@ -189,8 +191,10 @@ class App(QObject):
         self.act_pause = self.menu.addAction("Pausar/Reanudar", self.player.toggle_pause)
         self.act_stop = self.menu.addAction("Detener", self.player.stop)
         self.menu.addSeparator()
+        self.act_voice_studio = self.menu.addAction("★ Estudio de Voz (Clonar / Crear)", self.open_voice_studio)
         self.act_settings = self.menu.addAction("Configuración y Pronunciación", self.open_settings)
         self.act_hist = self.menu.addAction("Historial y Marcadores", self.open_history)
+        self.act_tutorial = self.menu.addAction("Ver tutorial de bienvenida", self.show_welcome)
         self.act_update = self.menu.addAction("Instalar actualización", self.install_update)
         self.act_update.setVisible(False)
         self.act_check_update = self.menu.addAction(
@@ -232,12 +236,18 @@ class App(QObject):
             self.player.load(texto, fuente)
             self.player.play(jump_idx)
 
-    def open_settings(self):
+    def open_settings(self, tab_idx=0):
         if not self.settings_dlg:
             self.settings_dlg = SettingsDialog(self.on_settings_saved)
         self.settings_dlg.load()
+        if isinstance(tab_idx, int) and 0 <= tab_idx < self.settings_dlg.tabs.count():
+            self.settings_dlg.tabs.setCurrentIndex(tab_idx)
         self.settings_dlg.show()
+        self.settings_dlg.raise_()
         self.settings_dlg.activateWindow()
+
+    def open_voice_studio(self):
+        self.open_settings(tab_idx=1)
 
     def on_settings_saved(self):
         self.register_hotkeys()
@@ -419,17 +429,8 @@ class App(QObject):
             QMessageBox.critical(self.reader, APP, f"Error al exportar audiolibro:\n{res}")
 
     def show_welcome(self):
-        cfg["first_run"] = False
-        save_cfg()
-        QMessageBox.information(
-            None,
-            APP,
-            "¡Bienvenido a Lector Libre!\n\n"
-            f"• Seleccioná texto o dejá el cursor donde quieras y apretá {cfg.get('hk_read', 'ctrl+alt+r').upper()}.\n"
-            f"• Para leer una página web o formulario activo: {cfg.get('hk_page', 'ctrl+alt+w').upper()} o el botón 📄 del reproductor.\n"
-            f"• Para leer texto de una imagen (OCR): {cfg.get('hk_ocr', 'ctrl+alt+o').upper()} o el botón 🔍.\n"
-            "• Todas las opciones están en el ícono junto al reloj (clic derecho).",
-        )
+        dlg = WelcomeTutorialDialog(on_open_voice_studio=self.open_voice_studio, parent=self.reader)
+        dlg.exec()
         self.ensure_models()
 
     def check_update(self, manual=False):
