@@ -20,3 +20,6 @@ Descargá `LectorLibre-Setup.exe` desde [Releases](https://github.com/faculuz/Le
 
 ## Desarrollo
 Código Python + PySide6. Cada tag `v*` compila en GitHub Actions (PyInstaller + Inno Setup) y publica el instalador; la app busca actualizaciones en las Releases.
+
+## Licencia
+Distribuido bajo la Licencia Apache 2.0. Ver `LICENSE` y `NOTICE` para más detalles.
